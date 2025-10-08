@@ -103,15 +103,6 @@ async def build_and_deploy(
 
 
 async def process_task(request: TaskRequest):
-    """
-    Background task to process the request.
-    
-    This function:
-    1. Generates app using LLM
-    2. Creates GitHub repository
-    3. Deploys to GitHub Pages
-    4. Notifies evaluation server
-    """
     try:
         logger.info(f"Processing task: {request.task}")
         
