@@ -1,0 +1,17 @@
+{
+  "email": "22f3002374@ds.study.iitm.ac.in",
+  "secret": "dead_man_Alive_token",
+  "task": "calculator-test-001",
+  "round": 1,
+  "nonce": "test-nonce-abc123",
+  "brief": "Create a simple calculator web application with basic operations (add, subtract, multiply, divide). Display the result inside an element with id='result'. Use Bootstrap 5 for styling from jsdelivr CDN.",
+  "checks": [
+    "Repo has MIT license",
+    "README.md is professional and complete",
+    "Page has element with id='result'",
+    "Page loads Bootstrap 5 from CDN",
+    "Calculator performs basic arithmetic operations"
+  ],
+  "evaluation_url": "https://httpbin.org/post",
+  "attachments": []
+}
