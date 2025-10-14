@@ -1,8 +1,10 @@
 """FastAPI application for receiving and processing task requests."""
 import logging
+import json
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 import uvicorn
 
 from config import get_settings
@@ -46,6 +48,20 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests for debugging."""
+    # Log request details
+    logger.info(f"Request: {request.method} {request.url.path} from {request.client.host}")
+    
+    # Log headers
+    content_type = request.headers.get("content-type", "")
+    logger.info(f"Content-Type: {content_type}")
+    
+    response = await call_next(request)
+    return response
+
+
 @app.get("/", response_model=HealthResponse)
 async def root():
     """Root endpoint."""
@@ -72,6 +88,7 @@ async def build_and_deploy(
     3. Processes task in background
     """
     logger.info(f"Received task request: {request.task} (round {request.round})")
+    logger.debug(f"Request details: {request.model_dump()}")
     
     # Validate email
     if request.email != settings.student_email:
@@ -175,6 +192,32 @@ async def process_task(request: TaskRequest):
         
     except Exception as e:
         logger.error(f"Error processing task {request.task}: {e}", exc_info=True)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    """Log validation errors with request body."""
+    try:
+        body = await request.body()
+        body_str = body.decode()
+        logger.error(f"Validation error - Content-Type: {request.headers.get('content-type')}")
+        logger.error(f"Raw body (first 500 chars): {body_str[:500]}")
+        logger.error(f"Validation errors: {exc.errors()}")
+        
+        # Try to help diagnose the issue
+        if body_str.startswith('"') or body_str.startswith("'"):
+            logger.error("⚠️  Body appears to be a JSON STRING instead of JSON object!")
+            logger.error("Make sure Content-Type is 'application/json' and body is raw JSON, not a string")
+    except Exception as e:
+        logger.error(f"Could not read request body: {e}")
+    
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(),
+            "hint": "Ensure Content-Type is 'application/json' and body is valid JSON (not a string)"
+        }
+    )
 
 
 @app.exception_handler(Exception)

@@ -1,6 +1,6 @@
 """Pydantic models for request/response validation."""
-from pydantic import BaseModel, Field
-from typing import List, Optional
+from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Union
 
 
 class Attachment(BaseModel):
@@ -17,9 +17,17 @@ class TaskRequest(BaseModel):
     round: int = Field(ge=1)
     nonce: str
     brief: str
-    checks: List[str]
+    checks: Union[str, List[str]]
     evaluation_url: str
     attachments: Optional[List[Attachment]] = []
+    
+    @field_validator('checks')
+    @classmethod
+    def normalize_checks(cls, v):
+        """Convert checks to list if it's a string."""
+        if isinstance(v, str):
+            return [v]
+        return v
 
 
 class TaskResponse(BaseModel):
