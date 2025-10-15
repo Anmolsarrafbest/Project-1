@@ -1,6 +1,6 @@
 """Notification service to send results to evaluation server."""
 import logging
-import time
+import asyncio
 from typing import List
 import httpx
 from models import EvaluationNotification
@@ -62,7 +62,7 @@ class NotificationService:
             if attempt < self.max_retries - 1:
                 delay = self.retry_delays[attempt]
                 logger.info(f"Retrying in {delay} seconds...")
-                time.sleep(delay)
+                await asyncio.sleep(delay)
         
         logger.error(
             f"Failed to notify evaluation server after {self.max_retries} attempts"

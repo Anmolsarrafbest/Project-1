@@ -1,1 +1,17 @@
+{
 
+  "email": "your.email@example.com",
+  "secret": "your-secret-key",
+  "task": "calculator-test-001",
+  "round": 1,
+  "nonce": "test-nonce-12345",
+  "brief": "Create a simple calculator web application using HTML, CSS, and JavaScript. The calculator should support basic arithmetic operations (addition, subtraction, multiplication, division). Use Bootstrap 5 for styling to make it look professional and responsive. Include a display area to show the result with id='result'. Make sure the interface is clean and user-friendly.",
+  "checks": [
+    "Repo has MIT license",
+    "README.md is professional and complete",
+    "Page has element with id='result'",
+    "Page loads Bootstrap 5 from CDN"
+  ],
+  "evaluation_url": "https://example.com/evaluate",
+  "attachments": []
+}

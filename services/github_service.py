@@ -1,6 +1,6 @@
 """GitHub repository creation and Pages deployment."""
 import logging
-import time
+import asyncio
 from typing import Dict
 from github import Github, GithubException
 import httpx
@@ -14,6 +14,7 @@ class GitHubService:
     def __init__(self, token: str, username: str, pages_timeout: int = 300):
         """Initialize GitHub client."""
         self.github = Github(token)
+        self.token = token  # Store token for API calls
         self.username = username
         self.user = self.github.get_user()
         self.pages_timeout = pages_timeout
@@ -54,8 +55,8 @@ class GitHubService:
             # Enable GitHub Pages
             pages_url = self._enable_pages(repo)
             
-            # Wait for Pages to be ready
-            self._wait_for_pages(pages_url)
+            # Wait for Pages to be ready (async)
+            asyncio.run(self._wait_for_pages(pages_url))
             
             return {
                 "repo_url": repo.html_url,
@@ -67,7 +68,7 @@ class GitHubService:
             logger.error(f"GitHub API error: {e}")
             raise
     
-    def update_repository(
+    async def update_repository(
         self,
         repo_name: str,
         files: Dict[str, str]
@@ -94,10 +95,10 @@ class GitHubService:
             # Pages should already be enabled
             pages_url = f"https://{self.username}.github.io/{repo_name}/"
             
-            # Wait for Pages to rebuild
+            # Wait for Pages to rebuild (async)
             logger.info("Waiting for Pages to rebuild...")
-            time.sleep(15)
-            self._wait_for_pages(pages_url)
+            await asyncio.sleep(15)
+            await self._wait_for_pages(pages_url)
             
             return {
                 "repo_url": repo.html_url,
@@ -235,7 +236,7 @@ class GitHubService:
         try:
             url = f"https://api.github.com/repos/{self.username}/{repo.name}/pages"
             headers = {
-                "Authorization": f"token {self.github._Github__requester._Requester__auth.token}",
+                "Authorization": f"token {self.token}",
                 "Accept": "application/vnd.github.v3+json"
             }
             data = {
@@ -262,16 +263,17 @@ class GitHubService:
             # Return expected URL
             return f"https://{self.username}.github.io/{repo.name}/"
     
-    def _wait_for_pages(self, pages_url: str):
+    async def _wait_for_pages(self, pages_url: str):
         """Wait for GitHub Pages to become available."""
         logger.info(f"Waiting for Pages to be ready: {pages_url}")
         
+        import time
         start_time = time.time()
         
         while time.time() - start_time < self.pages_timeout:
             try:
-                with httpx.Client(timeout=10.0) as client:
-                    response = client.get(pages_url)
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    response = await client.get(pages_url)
                     
                     if response.status_code == 200:
                         logger.info(f"✓ GitHub Pages is live!")
@@ -280,7 +282,7 @@ class GitHubService:
             except Exception as e:
                 logger.debug(f"Pages not ready yet: {e}")
             
-            time.sleep(10)
+            await asyncio.sleep(10)
         
         logger.warning(
             f"Timeout waiting for Pages (waited {self.pages_timeout}s). "

@@ -351,7 +351,7 @@ async def process_task(request: TaskRequest, request_key: tuple):
             )
         else:
             logger.info("Step 2: Updating existing repository...")
-            deployment = github_service.update_repository(
+            deployment = await github_service.update_repository(
                 repo_name=repo_name,
                 files=files
             )
@@ -362,8 +362,12 @@ async def process_task(request: TaskRequest, request_key: tuple):
         logger.info("=" * 60)
         
         try:
+            import time
+            # Add cache-busting timestamp to prevent validating stale content
+            cache_buster = f"?_t={int(time.time())}"
+            
             live_validation = validator.validate_deployed_page(
-                deployment["pages_url"],
+                deployment["pages_url"] + cache_buster,
                 request.checks,
                 timeout=20
             )

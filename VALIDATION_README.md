@@ -7,19 +7,23 @@ A comprehensive validation system has been added to verify generated code meets 
 ## Files Added/Modified
 
 ### New Files:
+
 - `services/validator.py` - Complete validation service
 - `test_validator.py` - Test script to verify validation works
 
 ### Modified Files:
+
 - `main.py` - Integrated validation into processing pipeline
 - `requirements.txt` - Added `beautifulsoup4` and `lxml` for HTML parsing
 
 ## How It Works
 
 ### 1. Static File Validation
+
 **When:** After LLM generates files, before deployment
 
 **Checks:**
+
 - ✅ Required files exist (index.html, LICENSE, README.md)
 - ✅ Files are not empty
 - ✅ LICENSE is MIT
@@ -27,23 +31,26 @@ A comprehensive validation system has been added to verify generated code meets 
 - ✅ HTML has proper structure (DOCTYPE, html, body tags)
 
 ### 2. Requirements Validation
+
 **When:** After LLM generates files, before deployment
 
 **Checks against the `checks` array from IITM:**
 
-| Check Type | Example | How Validated |
-|------------|---------|---------------|
-| MIT License | "Repo has MIT license" | Searches LICENSE file for "MIT" |
-| README Quality | "README.md is professional and complete" | Checks length > 200, has headings, has sections |
-| HTML Elements | "Page has element with id='result'" | Parses HTML with BeautifulSoup, finds element by ID |
-| Bootstrap CDN | "Page loads Bootstrap 5 from CDN" | Searches HTML for Bootstrap CDN links, checks version |
-| Operations | "Calculator performs basic arithmetic operations" | Searches code for functions, arithmetic operators (+, -, *, /) |
-| Generic | Other checks | Basic keyword matching (best-effort) |
+| Check Type     | Example                                           | How Validated                                                   |
+| -------------- | ------------------------------------------------- | --------------------------------------------------------------- |
+| MIT License    | "Repo has MIT license"                            | Searches LICENSE file for "MIT"                                 |
+| README Quality | "README.md is professional and complete"          | Checks length > 200, has headings, has sections                 |
+| HTML Elements  | "Page has element with id='result'"               | Parses HTML with BeautifulSoup, finds element by ID             |
+| Bootstrap CDN  | "Page loads Bootstrap 5 from CDN"                 | Searches HTML for Bootstrap CDN links, checks version           |
+| Operations     | "Calculator performs basic arithmetic operations" | Searches code for functions, arithmetic operators (+, -, \*, /) |
+| Generic        | Other checks                                      | Basic keyword matching (best-effort)                            |
 
 ### 3. Live Page Validation
+
 **When:** After deployment to GitHub Pages
 
 **Checks:**
+
 - ✅ Page loads successfully (HTTP 200)
 - ✅ Page is not empty
 - ✅ Required elements exist on live page (from `checks`)
@@ -89,6 +96,7 @@ VALIDATION COMPLETE
 **Important:** Validation does NOT block deployment!
 
 ### What Happens:
+
 1. LLM generates code
 2. ✅ Validation runs and logs results
 3. 🚀 Deployment happens regardless
@@ -96,6 +104,7 @@ VALIDATION COMPLETE
 5. 📬 Notification sent to IITM
 
 ### Why Not Block?
+
 - LLM might generate working code that validation can't verify
 - False positives would prevent valid deployments
 - Better to deploy and let IITM's evaluation be the final judge
@@ -104,12 +113,14 @@ VALIDATION COMPLETE
 ## Testing
 
 ### Run Test Locally:
+
 ```powershell
 cd "D:\projects\TDS\Project 1"
 .\venv\Scripts\python test_validator.py
 ```
 
 ### Expected Output:
+
 - Static validation: PASS
 - Checks validation: 4/5 checks pass (README too short in test data)
 - Detailed per-check results with ✓/✗ icons
@@ -117,6 +128,7 @@ cd "D:\projects\TDS\Project 1"
 ## Supported Checks
 
 ### ✅ Fully Validated:
+
 - "Repo has MIT license"
 - "README.md is professional and complete"
 - "Page has element with id='X'"
@@ -124,10 +136,12 @@ cd "D:\projects\TDS\Project 1"
 - "Performs operations" / "arithmetic" / "calculations"
 
 ### ⚠️ Partially Validated:
+
 - Generic text-based checks (keyword matching)
 - Checks requiring browser execution (JavaScript behavior)
 
 ### ❌ Not Validated:
+
 - "Code quality" (subjective, requires LLM)
 - Complex logic validation (e.g., "calculates correctly")
 - UI/UX checks (requires visual inspection)
@@ -135,12 +149,14 @@ cd "D:\projects\TDS\Project 1"
 ## Benefits
 
 ### For You:
+
 - 📊 **Visibility:** See what passes/fails before IITM evaluates
 - 🐛 **Early Warning:** Catch obvious mistakes (missing files, wrong IDs)
 - 📝 **Debug Logs:** Detailed validation results for troubleshooting
 - 🎯 **Improve Prompts:** Learn which checks LLM consistently fails
 
 ### For IITM Evaluation:
+
 - Higher success rate (you catch issues early)
 - Fewer obvious failures (missing LICENSE, wrong element IDs)
 - Better code quality (validation encourages completeness)
@@ -148,6 +164,7 @@ cd "D:\projects\TDS\Project 1"
 ## Future Improvements (Optional)
 
 ### Retry on Failure:
+
 ```python
 if not validation["all_passed"]:
     # Ask LLM to fix issues
@@ -155,6 +172,7 @@ if not validation["all_passed"]:
 ```
 
 ### Block Deployment on Critical Failures:
+
 ```python
 if validation["critical_errors"]:
     # Don't deploy, mark as failed
@@ -162,6 +180,7 @@ if validation["critical_errors"]:
 ```
 
 ### Validation Report in Notification:
+
 ```python
 notification = {
     ...existing fields...,
@@ -176,13 +195,16 @@ notification = {
 ## Dependencies
 
 ### Required:
+
 - `httpx` - Already installed (for HTTP requests)
 
 ### Optional but Recommended:
+
 - `beautifulsoup4` - HTML parsing (better element detection)
 - `lxml` - Fast HTML parser for BeautifulSoup
 
 **Install:**
+
 ```powershell
 pip install beautifulsoup4 lxml
 ```
@@ -190,6 +212,7 @@ pip install beautifulsoup4 lxml
 ## Status
 
 ✅ **Implemented and Working**
+
 - Static file validation
 - Requirements validation (checks array)
 - Live page validation
@@ -197,6 +220,7 @@ pip install beautifulsoup4 lxml
 - Test script
 
 🔒 **Not Committed to GitHub Yet**
+
 - Waiting for your approval after testing
 - You can test locally without affecting production
 
@@ -211,6 +235,7 @@ pip install beautifulsoup4 lxml
 ## How to Deploy Validation to Production
 
 **When ready:**
+
 ```powershell
 cd "D:\projects\TDS\Project 1"
 git add services/validator.py main.py requirements.txt
