@@ -90,6 +90,11 @@ class ValidationService:
             
             html_lower = html.lower()
             
+            # Check for escaped characters (critical quality issue)
+            escaped_char_issues = self._check_for_escaped_characters(html, "index.html")
+            if escaped_char_issues:
+                errors.extend(escaped_char_issues)
+            
             # Check DOCTYPE
             if "<!doctype" not in html_lower:
                 warnings.append("index.html missing DOCTYPE declaration")
@@ -108,6 +113,30 @@ class ValidationService:
             if "<title" not in html_lower:
                 warnings.append("index.html missing <title> tag")
         
+        # Validate JavaScript files for functionality
+        js_files = [f for f in files.keys() if f.endswith('.js')]
+        if js_files:
+            for js_file in js_files:
+                js_content = files[js_file]
+                if isinstance(js_content, bytes):
+                    js_content = js_content.decode('utf-8', errors='ignore')
+                
+                js_issues = self._check_javascript_functionality(js_content, js_file)
+                warnings.extend(js_issues)
+        
+        # Also check embedded JavaScript in HTML
+        if "index.html" in files:
+            html = files["index.html"]
+            if isinstance(html, bytes):
+                html = html.decode('utf-8', errors='ignore')
+            
+            # Extract script tags
+            script_match = re.search(r'<script[^>]*>(.*?)</script>', html, re.DOTALL | re.IGNORECASE)
+            if script_match:
+                embedded_js = script_match.group(1)
+                js_issues = self._check_javascript_functionality(embedded_js, "index.html (embedded)")
+                warnings.extend(js_issues)
+        
         result = {
             "passed": len(errors) == 0,
             "errors": errors,
@@ -118,6 +147,167 @@ class ValidationService:
         
         logger.info(f"Static validation: {len(errors)} errors, {len(warnings)} warnings")
         return result
+    
+    def _check_for_escaped_characters(self, content: str, filename: str) -> List[str]:
+        """
+        Check if content contains literal escaped characters like \\n or \\" 
+        which indicate the LLM returned improperly formatted code.
+        
+        Args:
+            content: File content to check
+            filename: Name of file being checked
+        
+        Returns:
+            List of error messages
+        """
+        errors = []
+        
+        # Check first 1000 characters for escaped sequences
+        # (if they're at the start, the whole file is likely broken)
+        sample = content[:1000]
+        
+        # Pattern 1: Literal \n sequences (not actual newlines)
+        # In properly formatted HTML, we should have actual newlines, not the two-character sequence \n
+        if '\\n' in sample:
+            # Count occurrences
+            count = sample.count('\\n')
+            errors.append(
+                f"{filename}: Contains {count}+ literal '\\n' sequences - "
+                "LLM returned escaped text instead of actual newlines"
+            )
+        
+        # Pattern 2: Literal \" sequences  
+        if '\\"' in sample:
+            count = sample.count('\\"')
+            errors.append(
+                f"{filename}: Contains {count}+ literal '\\\"' sequences - "
+                "LLM returned escaped quotes instead of actual quotes"
+            )
+        
+        # Pattern 3: Literal \t sequences
+        if '\\t' in sample:
+            count = sample.count('\\t')
+            errors.append(
+                f"{filename}: Contains {count}+ literal '\\t' sequences - "
+                "LLM returned escaped tabs"
+            )
+        
+        # Pattern 4: Check if HTML tags are malformed
+        if filename.endswith('.html'):
+            # If we see patterns like <html\\n or lang=\\"en\\", it's broken
+            if re.search(r'<\w+\\n', sample) or re.search(r'=\\"[^"]*\\"', sample):
+                errors.append(
+                    f"{filename}: HTML tags contain escaped characters - "
+                    "file is malformed"
+                )
+        
+        return errors
+    
+    def _check_javascript_functionality(self, js_code: str, source: str) -> List[str]:
+        """
+        Check if JavaScript code has common issues that prevent functionality.
+        
+        Args:
+            js_code: JavaScript code to analyze
+            source: Source file name for error messages
+        
+        Returns:
+            List of warning messages
+        """
+        warnings = []
+        
+        # Skip check if code is too short (likely just comments or minimal)
+        lines = [l.strip() for l in js_code.split('\n') if l.strip() and not l.strip().startswith('//')]
+        if len(lines) < 3:
+            return warnings
+        
+        js_lower = js_code.lower()
+        
+        # Check 1: Interactive elements without event handlers
+        has_button_refs = any(word in js_lower for word in ['button', 'btn', 'click'])
+        has_event_handlers = any(pattern in js_code for pattern in [
+            'addEventListener',
+            '.click(',
+            '.on(',
+            'onclick',
+            '@click'
+        ])
+        
+        if has_button_refs and not has_event_handlers:
+            warnings.append(
+                f"{source}: References buttons but no event handlers found - "
+                "interactive elements may not work"
+            )
+        
+        # Check 2: Form handling without submit handler
+        has_form_refs = any(word in js_lower for word in ['form', 'submit', 'input'])
+        has_form_handlers = any(pattern in js_code for pattern in [
+            '.submit(',
+            'onsubmit',
+            'addEventListener("submit"',
+            "addEventListener('submit'"
+        ])
+        
+        if has_form_refs and 'form' in js_lower and not has_form_handlers:
+            warnings.append(
+                f"{source}: References forms but no submit handler found - "
+                "form submission may not be handled"
+            )
+        
+        # Check 3: TODO or placeholder comments
+        if 'TODO' in js_code or 'todo' in js_code:
+            warnings.append(
+                f"{source}: Contains TODO comments - "
+                "code may have incomplete implementations"
+            )
+        
+        if 'placeholder' in js_lower or 'fixme' in js_lower:
+            warnings.append(
+                f"{source}: Contains placeholder/FIXME comments - "
+                "code may be incomplete"
+            )
+        
+        # Check 4: Event handlers but no actual logic
+        # If we have addEventListener but very little code, it might be incomplete
+        if 'addEventListener' in js_code or '.click(' in js_code:
+            # Count actual logic lines (not comments, not just brackets)
+            logic_lines = [
+                l for l in lines 
+                if l and l not in ['{', '}', '});', '};'] 
+                and not l.startswith('//') 
+                and not l.startswith('/*')
+            ]
+            
+            if len(logic_lines) < 5:
+                warnings.append(
+                    f"{source}: Has event handlers but very little logic ({len(logic_lines)} lines) - "
+                    "functionality may be incomplete"
+                )
+        
+        # Check 5: Console.log but no actual DOM manipulation
+        has_console_log = 'console.log' in js_code
+        has_dom_manipulation = any(pattern in js_code for pattern in [
+            '.appendChild',
+            '.innerHTML',
+            '.innerText',
+            '.textContent',
+            '.createElement',
+            '.remove',
+            '.classList',
+            '.style',
+            '.setAttribute',
+            '$(',  # jQuery
+            'document.querySelector',
+            'document.getElementById'
+        ])
+        
+        if has_console_log and not has_dom_manipulation and len(lines) > 5:
+            warnings.append(
+                f"{source}: Has console.log but no DOM manipulation - "
+                "may be logging without actual UI updates"
+            )
+        
+        return warnings
     
     def validate_against_checks(
         self,

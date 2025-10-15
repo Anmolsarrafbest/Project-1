@@ -270,6 +270,54 @@ async def process_task(request: TaskRequest, request_key: tuple):
         else:
             logger.error("✗ Static validation FAILED")
         
+        # Step 1.5.5: RETRY GENERATION if critical errors detected
+        # Critical errors: escaped characters (\\n, \\"), which indicate LLM output quality issue
+        has_critical_errors = False
+        critical_error_types = ["literal '\\\\n'", "literal '\\\\\"'", "escaped", "malformed"]
+        
+        for error in static_validation.get("errors", []):
+            if any(err_type in error.lower() for err_type in critical_error_types):
+                has_critical_errors = True
+                break
+        
+        if has_critical_errors:
+            logger.warning("=" * 60)
+            logger.warning("CRITICAL QUALITY ISSUE DETECTED: Retrying generation...")
+            logger.warning("=" * 60)
+            
+            try:
+                # Retry generation once with same parameters
+                logger.info("Retrying LLM generation (attempt 2/2)...")
+                files = generator.generate_app(
+                    brief=request.brief,
+                    checks=request.checks,
+                    attachments=request.attachments or [],
+                    task_id=request.task,
+                    round_num=request.round,
+                    existing_files=existing_files
+                )
+                
+                # Re-validate after retry
+                logger.info("Re-validating after retry...")
+                static_validation = validator.validate_static_files(files, request.checks)
+                
+                # Check if retry fixed the issue
+                retry_has_critical = False
+                for error in static_validation.get("errors", []):
+                    if any(err_type in error.lower() for err_type in critical_error_types):
+                        retry_has_critical = True
+                        break
+                
+                if not retry_has_critical:
+                    logger.info("✓ Retry successful: Critical errors resolved!")
+                else:
+                    logger.error("✗ Retry failed: Critical errors still present")
+                    logger.error("Continuing with current output (may be broken)...")
+                    
+            except Exception as e:
+                logger.error(f"Retry generation failed: {e}")
+                logger.error("Continuing with original output...")
+        
         logger.info("=" * 60)
         logger.info("VALIDATION: Checking against requirements")
         logger.info("=" * 60)
@@ -362,6 +410,7 @@ async def process_task(request: TaskRequest, request_key: tuple):
         logger.info("=" * 60)
         
         try:
+            import time
             # Add cache-busting timestamp to prevent validating stale content
             cache_buster = f"?_t={int(time.time())}"
             

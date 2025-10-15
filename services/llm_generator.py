@@ -390,6 +390,19 @@ CRITICAL REQUIREMENTS FOR UPDATES:
 6. Maintain code style and patterns from the existing code
 7. Add comments explaining what you changed and why
 
+FUNCTIONALITY REQUIREMENTS (EXTREMELY IMPORTANT):
+- Ensure ALL interactive elements continue to work after updates
+- If adding new buttons/forms, they MUST have working event handlers
+- Don't break existing event listeners when adding new ones
+- Verify selectors still match after HTML changes
+- Test mentally: "Will all features still work after this update?"
+
+CODE QUALITY:
+- Complete implementations only - no TODOs or placeholders
+- Proper event handler attachment
+- Correct DOM manipulation logic
+- All user interactions must have responses
+
 OUTPUT FORMAT:
 Return ONLY the files that need to be modified or added as a JSON object:
 {
@@ -400,7 +413,8 @@ Return ONLY the files that need to be modified or added as a JSON object:
 }
 
 If a file doesn't need changes, DON'T include it in your response.
-Return ONLY the JSON object, no other text."""
+Return ONLY the JSON object, no other text.
+CRITICAL: All new features must be fully implemented and working!"""
     
     def _get_system_prompt(self) -> str:
         """System prompt for code generation."""
@@ -409,13 +423,29 @@ Return ONLY the JSON object, no other text."""
 Your task is to generate a complete, functional web application based on the user's requirements.
 
 CRITICAL REQUIREMENTS:
-1. Create working code that runs in a browser
+1. Create working code that runs in a browser - ALL FEATURES MUST WORK
 2. Use CDN links for any libraries (Bootstrap, jQuery, Chart.js, etc.)
 3. Make the app professional and user-friendly
 4. Follow the brief EXACTLY - implement all requirements
 5. Ensure all validation checks will pass
 6. Use modern, clean code with proper error handling
 7. Add helpful comments explaining key logic
+
+FUNCTIONALITY REQUIREMENTS (EXTREMELY IMPORTANT):
+- ALL interactive elements (buttons, forms, inputs) MUST have working event handlers
+- Event listeners must be properly attached using addEventListener or jQuery .on()/.click()
+- Button clicks MUST perform actual actions (don't leave placeholder TODOs)
+- Forms MUST handle submit events and prevent default behavior
+- User input MUST be validated and processed correctly
+- DOM manipulation MUST actually create/update/delete elements as intended
+- Test mentally: "Will clicking this button actually do something?" - If no, FIX IT!
+
+CODE QUALITY:
+- Write complete implementations, not placeholders
+- Include all necessary JavaScript logic
+- Ensure event handlers are attached after DOM is ready
+- Use proper selectors that match the HTML element IDs/classes
+- Add console.log for debugging but ensure core logic is complete
 
 OUTPUT FORMAT:
 Return your response as a valid JSON object with this structure:
@@ -430,7 +460,8 @@ Return your response as a valid JSON object with this structure:
 If the app can fit in a single HTML file with embedded CSS/JS, that's fine - just include index.html.
 If you need separate files for better organization, include style.css and/or script.js.
 
-IMPORTANT: Return ONLY the JSON object, no other text."""
+IMPORTANT: Return ONLY the JSON object, no other text.
+CRITICAL: ALL interactive features must be fully implemented and working - no placeholders!"""
     
     def _build_prompt(
         self,
@@ -506,6 +537,33 @@ IMPORTANT: Return ONLY the JSON object, no other text."""
                     files = data["files"]
                 else:
                     files = data
+                
+                # Fix escaped newlines and quotes in file content
+                # This handles cases where LLM returns improperly escaped content
+                for filename, content in files.items():
+                    if isinstance(content, str):
+                        # First pass: handle double-escaped sequences from JSON
+                        content = content.replace('\\n', '\n')
+                        content = content.replace('\\t', '\t')
+                        content = content.replace('\\r', '\r')
+                        content = content.replace('\\"', '"')
+                        content = content.replace("\\'", "'")
+                        
+                        # Second pass: detect and fix literal escape sequences
+                        # If HTML/JS/CSS still contains literal \n or \" after JSON parsing,
+                        # it means LLM returned them as raw text instead of proper escapes
+                        if filename.endswith(('.html', '.htm', '.js', '.css', '.json')):
+                            # Check if content still has problematic patterns
+                            test_str = content[:500]  # Check first 500 chars
+                            if '\\n' in test_str or '\\"' in test_str or '\\t' in test_str:
+                                logger.warning(f"Detected literal escape sequences in {filename}, attempting to fix...")
+                                try:
+                                    # Try to decode unicode escape sequences
+                                    content = content.encode('utf-8').decode('unicode_escape')
+                                except Exception as e:
+                                    logger.warning(f"Could not decode escape sequences in {filename}: {e}")
+                        
+                        files[filename] = content
             else:
                 raise ValueError("No JSON found in response")
                 
