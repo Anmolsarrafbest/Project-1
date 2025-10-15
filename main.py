@@ -1,7 +1,9 @@
 """FastAPI application for receiving and processing task requests."""
 import logging
 import json
+import time
 from contextlib import asynccontextmanager
+from typing import Dict, Set
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -28,6 +30,11 @@ logger = logging.getLogger(__name__)
 # Get settings
 settings = get_settings()
 
+# Request tracking for duplicate detection
+# Track: {(task, round, nonce): {"status": "processing"|"completed", "timestamp": float, "result": dict}}
+request_tracker: Dict[tuple, dict] = {}
+TRACKER_CLEANUP_INTERVAL = 900  # 15 minutes in seconds
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -37,6 +44,21 @@ async def lifespan(app: FastAPI):
     logger.info(f"GitHub username: {settings.github_username}")
     yield
     logger.info("Shutting down application...")
+
+
+def cleanup_old_requests():
+    """Remove old entries from request tracker to prevent memory bloat."""
+    current_time = time.time()
+    keys_to_remove = [
+        key for key, data in request_tracker.items()
+        if current_time - data["timestamp"] > TRACKER_CLEANUP_INTERVAL
+    ]
+    for key in keys_to_remove:
+        del request_tracker[key]
+        logger.debug(f"Cleaned up old request: {key}")
+    
+    if keys_to_remove:
+        logger.info(f"Cleaned up {len(keys_to_remove)} old request(s) from tracker")
 
 
 # Create FastAPI app
@@ -84,8 +106,9 @@ async def build_and_deploy(
     
     This endpoint:
     1. Validates the secret
-    2. Returns immediate 200 response
-    3. Processes task in background
+    2. Checks for duplicate requests (same task/round/nonce)
+    3. Returns immediate 200 response
+    4. Processes task in background
     """
     logger.info(f"Received task request: {request.task} (round {request.round})")
     logger.debug(f"Request details: {request.model_dump()}")
@@ -106,10 +129,44 @@ async def build_and_deploy(
             detail="Invalid secret"
         )
     
+    # Check for duplicate request
+    request_key = (request.task, request.round, request.nonce)
+    
+    if request_key in request_tracker:
+        existing = request_tracker[request_key]
+        status = existing["status"]
+        
+        if status == "processing":
+            logger.warning(f"Duplicate request detected - already processing: {request_key}")
+            return TaskResponse(
+                status="processing",
+                message=f"Task {request.task} (round {request.round}) is already being processed"
+            )
+        elif status == "completed":
+            logger.warning(f"Duplicate request detected - already completed: {request_key}")
+            return TaskResponse(
+                status="already_completed",
+                message=f"Task {request.task} (round {request.round}) was already completed"
+            )
+    
+    # Mark request as processing
+    request_tracker[request_key] = {
+        "status": "processing",
+        "timestamp": time.time(),
+        "result": None
+    }
+    
+    logger.info(f"Request accepted and marked as processing: {request_key}")
+    
+    # Clean up old requests periodically
+    if len(request_tracker) % 10 == 0:  # Every 10th request
+        cleanup_old_requests()
+    
     # Add background task
     background_tasks.add_task(
         process_task,
-        request
+        request,
+        request_key
     )
     
     # Return immediate response
@@ -119,7 +176,7 @@ async def build_and_deploy(
     )
 
 
-async def process_task(request: TaskRequest):
+async def process_task(request: TaskRequest, request_key: tuple):
     try:
         logger.info(f"Processing task: {request.task}")
         
@@ -199,11 +256,30 @@ async def process_task(request: TaskRequest):
         
         if success:
             logger.info(f"✓ Task {request.task} completed successfully!")
+            # Mark as completed in tracker
+            request_tracker[request_key] = {
+                "status": "completed",
+                "timestamp": time.time(),
+                "result": deployment
+            }
         else:
             logger.error(f"✗ Task {request.task} completed but notification failed")
+            # Still mark as completed (work is done, just notification failed)
+            request_tracker[request_key] = {
+                "status": "completed",
+                "timestamp": time.time(),
+                "result": deployment
+            }
         
     except Exception as e:
         logger.error(f"Error processing task {request.task}: {e}", exc_info=True)
+        # Mark as failed but keep in tracker to prevent retries of failed tasks
+        request_tracker[request_key] = {
+            "status": "failed",
+            "timestamp": time.time(),
+            "result": None,
+            "error": str(e)
+        }
 
 
 @app.exception_handler(RequestValidationError)
