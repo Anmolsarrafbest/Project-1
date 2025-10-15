@@ -19,6 +19,7 @@ from models import (
 from services.llm_generator import LLMGenerator
 from services.github_service import GitHubService
 from services.notifier import NotificationService
+from services.validator import ValidationService
 
 # Configure logging
 logging.basicConfig(
@@ -198,6 +199,8 @@ async def process_task(request: TaskRequest, request_key: tuple):
             retry_delays=settings.retry_delays
         )
         
+        validator = ValidationService()
+        
         # Determine repository name
         repo_name = request.task.replace(".", "-").replace("_", "-")
         
@@ -222,6 +225,99 @@ async def process_task(request: TaskRequest, request_key: tuple):
             existing_files=existing_files
         )
         
+        # Step 1.5: VALIDATE generated files
+        logger.info("=" * 60)
+        logger.info("VALIDATION: Static file validation")
+        logger.info("=" * 60)
+        
+        static_validation = validator.validate_static_files(files, request.checks)
+        
+        if static_validation["errors"]:
+            logger.error("❌ Static validation ERRORS:")
+            for error in static_validation["errors"]:
+                logger.error(f"  • {error}")
+        
+        if static_validation["warnings"]:
+            logger.warning("⚠️  Static validation WARNINGS:")
+            for warning in static_validation["warnings"]:
+                logger.warning(f"  • {warning}")
+        
+        if static_validation["passed"]:
+            logger.info("✓ Static validation PASSED")
+        else:
+            logger.error("✗ Static validation FAILED")
+        
+        logger.info("=" * 60)
+        logger.info("VALIDATION: Checking against requirements")
+        logger.info("=" * 60)
+        
+        checks_validation = validator.validate_against_checks(files, request.checks)
+        
+        logger.info(f"Checks validation summary: {checks_validation['passed_count']}/{checks_validation['total_checks']} passed")
+        
+        if checks_validation["failed_count"] > 0:
+            logger.error(f"❌ {checks_validation['failed_count']} checks FAILED")
+        
+        if checks_validation["unknown_count"] > 0:
+            logger.warning(f"⚠️  {checks_validation['unknown_count']} checks could not be validated")
+        
+        # Log detailed results
+        for result in checks_validation["results"]:
+            if result["passed"] == True:
+                logger.info(f"  ✓ {result['check']}")
+            elif result["passed"] == False:
+                logger.error(f"  ✗ {result['check']}: {result['message']}")
+            else:
+                logger.warning(f"  ⚠ {result['check']}: {result['message']}")
+        
+        logger.info("=" * 60)
+        
+        # Step 1.6: TARGETED FIXES for failed checks (if any)
+        if checks_validation["failed_count"] > 0:
+            logger.info("=" * 60)
+            logger.info("ATTEMPTING TARGETED FIXES")
+            logger.info("=" * 60)
+            
+            failed_checks = [r for r in checks_validation["results"] if r["passed"] == False]
+            
+            try:
+                # Only fix specific failed checks (fast!)
+                fixed_files = generator.fix_validation_failures(
+                    files,
+                    failed_checks,
+                    request.task
+                )
+                
+                # Re-validate ONLY if files were actually changed
+                if fixed_files != files:
+                    logger.info("Re-validating after fixes...")
+                    files = fixed_files
+                    
+                    # Quick re-validation
+                    recheck_validation = validator.validate_against_checks(files, request.checks)
+                    
+                    improvement = recheck_validation["passed_count"] - checks_validation["passed_count"]
+                    
+                    if improvement > 0:
+                        logger.info(f"✓ Fixes successful: {improvement} more checks passed!")
+                        logger.info(f"New score: {recheck_validation['passed_count']}/{recheck_validation['total_checks']}")
+                    else:
+                        logger.warning("Fixes did not improve validation results")
+                    
+                    # Log what changed
+                    for result in recheck_validation["results"]:
+                        old_result = next((r for r in checks_validation["results"] if r["check"] == result["check"]), None)
+                        if old_result and old_result["passed"] == False and result["passed"] == True:
+                            logger.info(f"  ✓ FIXED: {result['check']}")
+                else:
+                    logger.info("No files were changed during fix attempt")
+                    
+            except Exception as e:
+                logger.error(f"Fix attempt failed (non-fatal): {e}")
+                logger.info("Continuing with original files...")
+            
+            logger.info("=" * 60)
+        
         # Step 2: Create/update repository
         if request.round == 1:
             logger.info("Step 2: Creating new GitHub repository...")
@@ -236,6 +332,43 @@ async def process_task(request: TaskRequest, request_key: tuple):
                 repo_name=repo_name,
                 files=files
             )
+        
+        # Step 2.5: VALIDATE deployed page
+        logger.info("=" * 60)
+        logger.info("VALIDATION: Live deployed page")
+        logger.info("=" * 60)
+        
+        try:
+            live_validation = validator.validate_deployed_page(
+                deployment["pages_url"],
+                request.checks,
+                timeout=20
+            )
+            
+            if live_validation["info"]:
+                logger.info(f"Page info: {live_validation['info']}")
+            
+            if live_validation["errors"]:
+                logger.error("❌ Live page validation ERRORS:")
+                for error in live_validation["errors"]:
+                    logger.error(f"  • {error}")
+            
+            if live_validation["warnings"]:
+                logger.warning("⚠️  Live page validation WARNINGS:")
+                for warning in live_validation["warnings"]:
+                    logger.warning(f"  • {warning}")
+            
+            if live_validation["passed"]:
+                logger.info("✓ Live page validation PASSED")
+            else:
+                logger.error("✗ Live page validation FAILED")
+        
+        except Exception as e:
+            logger.error(f"Live validation error (non-fatal): {e}")
+        
+        logger.info("=" * 60)
+        logger.info("VALIDATION COMPLETE")
+        logger.info("=" * 60)
         
         # Step 3: Notify evaluation server
         logger.info("Step 3: Notifying evaluation server...")

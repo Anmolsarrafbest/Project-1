@@ -200,6 +200,181 @@ class LLMGenerator:
         logger.info(f"Updated app: {len(updated_files)} files modified, {len(final_files)} total files")
         return final_files
     
+    def fix_validation_failures(
+        self,
+        files: Dict[str, str],
+        failed_checks: List[Dict],
+        task_id: str
+    ) -> Dict[str, str]:
+        """
+        Quick targeted fixes for failed validation checks.
+        Only regenerates files that need fixing, not the entire app.
+        
+        Args:
+            files: Current files
+            failed_checks: List of failed check results from validator
+            task_id: Task ID for context
+        
+        Returns:
+            Updated files (only changed files)
+        """
+        if not failed_checks:
+            return files
+        
+        logger.info(f"Attempting targeted fixes for {len(failed_checks)} failed checks...")
+        
+        # Group failures by file to fix
+        fixes_needed = {
+            "README.md": [],
+            "index.html": [],
+            "other": []
+        }
+        
+        for check in failed_checks:
+            check_lower = check["check"].lower()
+            
+            if "readme" in check_lower:
+                fixes_needed["README.md"].append(check)
+            elif "element" in check_lower or "id=" in check_lower or "bootstrap" in check_lower:
+                fixes_needed["index.html"].append(check)
+            else:
+                fixes_needed["other"].append(check)
+        
+        # Fix each file independently (faster than regenerating all)
+        updated_files = files.copy()
+        
+        # Fix README.md
+        if fixes_needed["README.md"]:
+            logger.info("Fixing README.md...")
+            updated_files["README.md"] = self._fix_readme(
+                files.get("README.md", ""),
+                fixes_needed["README.md"],
+                task_id
+            )
+        
+        # Fix index.html
+        if fixes_needed["index.html"]:
+            logger.info("Fixing index.html...")
+            updated_files["index.html"] = self._fix_html(
+                files.get("index.html", ""),
+                fixes_needed["index.html"]
+            )
+        
+        return updated_files
+    
+    def _fix_readme(
+        self,
+        current_readme: str,
+        failed_checks: List[Dict],
+        task_id: str
+    ) -> str:
+        """Fix README.md issues quickly."""
+        issues = []
+        for check in failed_checks:
+            issues.append(f"- {check['check']}: {check['message']}")
+        
+        prompt = f"""Fix the README.md for task "{task_id}".
+
+**Current README:**
+```
+{current_readme}
+```
+
+**Issues to fix:**
+{chr(10).join(issues)}
+
+**Requirements:**
+- Make it professional and complete (at least 300 characters)
+- Add proper markdown sections (## headings)
+- Include: Project Summary, Features, Setup Instructions, Usage
+- Keep it concise but informative
+- Use proper markdown formatting
+
+Return ONLY the fixed README.md content, no JSON, no code blocks."""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a technical writer. Return only the README content."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=800
+            )
+            
+            fixed_readme = response.choices[0].message.content.strip()
+            
+            # Remove markdown code fences if LLM added them
+            if fixed_readme.startswith("```"):
+                lines = fixed_readme.split("\n")
+                fixed_readme = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+            
+            logger.info(f"README fixed: {len(current_readme)} → {len(fixed_readme)} chars")
+            return fixed_readme
+            
+        except Exception as e:
+            logger.error(f"Failed to fix README: {e}")
+            return current_readme
+    
+    def _fix_html(
+        self,
+        current_html: str,
+        failed_checks: List[Dict]
+    ) -> str:
+        """Fix HTML issues quickly (add missing elements, Bootstrap, etc)."""
+        issues = []
+        for check in failed_checks:
+            issues.append(f"- {check['check']}: {check['message']}")
+        
+        prompt = f"""Fix the HTML below to pass these checks:
+
+{chr(10).join(issues)}
+
+**Current HTML:**
+```html
+{current_html}
+```
+
+**Fix requirements:**
+- Add ONLY what's missing (don't rewrite everything)
+- If element with specific id is missing, add it
+- If Bootstrap CDN is missing, add the link in <head>
+- Preserve existing functionality
+- Return the complete fixed HTML
+
+Return ONLY the fixed HTML, no explanation."""
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are an HTML expert. Return only the fixed HTML code."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.3,
+                max_tokens=2000
+            )
+            
+            fixed_html = response.choices[0].message.content.strip()
+            
+            # Remove markdown code fences
+            if "```html" in fixed_html:
+                import re
+                match = re.search(r"```html\n(.*?)```", fixed_html, re.DOTALL)
+                if match:
+                    fixed_html = match.group(1).strip()
+            elif fixed_html.startswith("```"):
+                lines = fixed_html.split("\n")
+                fixed_html = "\n".join(lines[1:-1] if lines[-1].startswith("```") else lines[1:])
+            
+            logger.info(f"HTML fixed: {len(current_html)} → {len(fixed_html)} chars")
+            return fixed_html
+            
+        except Exception as e:
+            logger.error(f"Failed to fix HTML: {e}")
+            return current_html
+    
     def _get_update_system_prompt(self) -> str:
         """System prompt for incremental updates."""
         return """You are an expert web developer specializing in maintaining and updating existing code.
