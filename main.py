@@ -141,19 +141,31 @@ async def process_task(request: TaskRequest):
             retry_delays=settings.retry_delays
         )
         
-        # Step 1: Generate application
-        logger.info("Step 1: Generating application with LLM...")
+        # Determine repository name
+        repo_name = request.task.replace(".", "-").replace("_", "-")
+        
+        # For Round 2+, fetch existing code first
+        existing_files = None
+        if request.round > 1:
+            logger.info(f"Round {request.round}: Fetching existing code from {repo_name}...")
+            existing_files = github_service.get_repository_files(repo_name)
+            
+            if not existing_files:
+                logger.warning(f"No existing repo found for {repo_name}, treating as Round 1")
+                request.round = 1  # Fallback to creating new repo
+        
+        # Step 1: Generate or update application
+        logger.info(f"Step 1: {'Updating' if request.round > 1 else 'Generating'} application with LLM...")
         files = generator.generate_app(
             brief=request.brief,
             checks=request.checks,
             attachments=request.attachments or [],
             task_id=request.task,
-            round_num=request.round
+            round_num=request.round,
+            existing_files=existing_files
         )
         
         # Step 2: Create/update repository
-        repo_name = request.task.replace(".", "-").replace("_", "-")
-        
         if request.round == 1:
             logger.info("Step 2: Creating new GitHub repository...")
             deployment = github_service.create_and_deploy(

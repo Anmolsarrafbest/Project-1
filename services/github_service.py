@@ -77,7 +77,7 @@ class GitHubService:
         
         Args:
             repo_name: Repository name
-            files: Dictionary of {filename: content}
+            files: Dictionary of {filename: content} - updated/new files only
         
         Returns:
             Dict with repo_url, commit_sha, pages_url
@@ -88,7 +88,7 @@ class GitHubService:
             # Get existing repository
             repo = self.user.get_repo(repo_name)
             
-            # Upload/update files
+            # Upload/update only the files that changed
             commit_sha = self._upload_files(repo, files, "Update application (Round 2)")
             
             # Pages should already be enabled
@@ -109,6 +109,59 @@ class GitHubService:
             if e.status == 404:
                 logger.warning("Repository not found, creating new one")
                 return self.create_and_deploy(repo_name, files, repo_name)
+            else:
+                raise
+    
+    def get_repository_files(self, repo_name: str) -> Dict[str, str]:
+        """
+        Fetch all files from an existing repository.
+        
+        Args:
+            repo_name: Repository name
+        
+        Returns:
+            Dictionary of {filename: content}
+        """
+        logger.info(f"Fetching files from repository: {repo_name}")
+        
+        try:
+            repo = self.user.get_repo(repo_name)
+            files = {}
+            
+            # Get all contents recursively
+            contents = repo.get_contents("")
+            
+            while contents:
+                file_content = contents.pop(0)
+                
+                if file_content.type == "dir":
+                    # Add directory contents to queue
+                    contents.extend(repo.get_contents(file_content.path))
+                else:
+                    # Read file content
+                    try:
+                        # Decode content
+                        content = file_content.decoded_content
+                        
+                        # Try to decode as UTF-8 text
+                        try:
+                            files[file_content.path] = content.decode('utf-8')
+                            logger.info(f"  Fetched: {file_content.path} (text)")
+                        except UnicodeDecodeError:
+                            # Keep as bytes for binary files
+                            files[file_content.path] = content
+                            logger.info(f"  Fetched: {file_content.path} (binary)")
+                    
+                    except Exception as e:
+                        logger.warning(f"Could not read {file_content.path}: {e}")
+            
+            logger.info(f"Fetched {len(files)} files from {repo_name}")
+            return files
+            
+        except GithubException as e:
+            if e.status == 404:
+                logger.error(f"Repository {repo_name} not found")
+                return {}
             else:
                 raise
     

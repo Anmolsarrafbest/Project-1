@@ -42,17 +42,19 @@ class LLMGenerator:
         checks: List[str],
         attachments: List[Attachment],
         task_id: str,
-        round_num: int
+        round_num: int,
+        existing_files: Dict[str, str] = None
     ) -> Dict[str, str]:
         """
-        Generate complete web application.
+        Generate complete web application or update existing one.
         
         Args:
-            brief: Task description
+            brief: Task description (for Round 2, this is the UPDATE request)
             checks: Validation checks that will be performed
             attachments: File attachments
             task_id: Unique task identifier
             round_num: Round number (1 or 2)
+            existing_files: For Round 2, the current repo files to update
         
         Returns:
             Dictionary of {filename: content}
@@ -60,6 +62,22 @@ class LLMGenerator:
         logger.info(f"Generating app for task: {task_id} (round {round_num})")
         logger.info(f"Brief: {brief[:100]}...")
         
+        if round_num > 1 and existing_files:
+            logger.info(f"Round {round_num}: Updating existing app with {len(existing_files)} files")
+            return self._update_existing_app(brief, checks, attachments, task_id, existing_files)
+        else:
+            logger.info("Round 1: Creating new app from scratch")
+            return self._create_new_app(brief, checks, attachments, task_id, round_num)
+    
+    def _create_new_app(
+        self,
+        brief: str,
+        checks: List[str],
+        attachments: List[Attachment],
+        task_id: str,
+        round_num: int
+    ) -> Dict[str, str]:
+        """Create a new app from scratch (Round 1)."""
         # Build comprehensive prompt
         prompt = self._build_prompt(brief, checks, attachments, task_id, round_num)
         
@@ -90,6 +108,124 @@ class LLMGenerator:
         
         logger.info(f"Generated {len(files)} files")
         return files
+    
+    def _update_existing_app(
+        self,
+        update_brief: str,
+        checks: List[str],
+        attachments: List[Attachment],
+        task_id: str,
+        existing_files: Dict[str, str]
+    ) -> Dict[str, str]:
+        """Update an existing app incrementally (Round 2+)."""
+        logger.info("Building incremental update prompt with existing code...")
+        
+        # Build update prompt with existing code context
+        prompt_parts = [
+            f"**Task ID:** {task_id}",
+            f"**Update Request:** {update_brief}",
+            "\n**IMPORTANT:** This is an UPDATE to an existing application. You must:",
+            "1. Read and understand the existing code below",
+            "2. Make ONLY the changes needed to fulfill the new brief",
+            "3. Preserve all existing functionality that still works",
+            "4. Don't regenerate from scratch - incrementally improve",
+            "\n**Existing Code:**\n"
+        ]
+        
+        # Show existing files to LLM
+        for filename, content in existing_files.items():
+            if filename not in ["LICENSE", "README.md"]:  # Skip auto-generated files
+                if isinstance(content, bytes):
+                    prompt_parts.append(f"\n**{filename}** (binary file, {len(content)} bytes)")
+                else:
+                    preview = content[:3000] if len(content) > 3000 else content
+                    prompt_parts.append(f"\n**{filename}:**\n```\n{preview}\n```")
+        
+        prompt_parts.append(f"\n**New Requirements (what to add/change):**\n{update_brief}")
+        
+        if checks:
+            prompt_parts.append("\n**Validation Checks (app must still pass these):**")
+            for i, check in enumerate(checks, 1):
+                prompt_parts.append(f"{i}. {check}")
+        
+        if attachments:
+            prompt_parts.append("\n**New Attachments:**")
+            for att in attachments:
+                if att.url.startswith("data:"):
+                    try:
+                        prompt_parts.append(self._decode_attachment_preview(att))
+                    except Exception as e:
+                        logger.warning(f"Could not decode {att.name}: {e}")
+        
+        prompt_parts.append("\n**Now update the application to include the new requirements while preserving existing features.**")
+        
+        prompt = "\n".join(prompt_parts)
+        
+        # Call LLM with update prompt
+        logger.info("Calling OpenAI API for incremental update...")
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": self._get_update_system_prompt()
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.5,  # Lower temperature for more conservative updates
+            max_tokens=4000
+        )
+        
+        # Parse updated code
+        updated_files = self._parse_response(response.choices[0].message.content, attachments)
+        
+        # Merge: keep files that weren't modified
+        final_files = existing_files.copy()
+        final_files.update(updated_files)
+        
+        # Always regenerate README to reflect updates
+        final_files["README.md"] = self._generate_readme(
+            f"Original: {existing_files.get('README.md', 'N/A')}\n\nUpdate: {update_brief}",
+            task_id,
+            final_files
+        )
+        
+        # Keep LICENSE unchanged
+        if "LICENSE" not in final_files:
+            final_files["LICENSE"] = self._generate_mit_license()
+        
+        logger.info(f"Updated app: {len(updated_files)} files modified, {len(final_files)} total files")
+        return final_files
+    
+    def _get_update_system_prompt(self) -> str:
+        """System prompt for incremental updates."""
+        return """You are an expert web developer specializing in maintaining and updating existing code.
+
+Your task is to UPDATE an existing web application based on new requirements.
+
+CRITICAL REQUIREMENTS FOR UPDATES:
+1. READ the existing code carefully - understand what it does
+2. Make MINIMAL changes to achieve the new requirements
+3. PRESERVE all existing functionality that still works
+4. Don't rewrite from scratch - update incrementally
+5. Keep the same file structure unless adding new files is necessary
+6. Maintain code style and patterns from the existing code
+7. Add comments explaining what you changed and why
+
+OUTPUT FORMAT:
+Return ONLY the files that need to be modified or added as a JSON object:
+{
+  "files": {
+    "index.html": "<!DOCTYPE html>\\n<html>...",
+    "script.js": "// Updated script with new feature..."
+  }
+}
+
+If a file doesn't need changes, DON'T include it in your response.
+Return ONLY the JSON object, no other text."""
     
     def _get_system_prompt(self) -> str:
         """System prompt for code generation."""
