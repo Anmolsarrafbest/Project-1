@@ -97,6 +97,29 @@ async def health_check():
     return HealthResponse(status="healthy")
 
 
+@app.get("/api/build")
+async def build_get_handler():
+    """Handle GET requests to /api/build - inform users to use POST."""
+    return {
+        "error": "Method Not Allowed",
+        "message": "Please send a POST request to this endpoint, not GET",
+        "endpoint": "/api/build",
+        "method": "POST",
+        "content_type": "application/json",
+        "example": {
+            "email": "your-email@example.com",
+            "task": "your-task-id",
+            "round": 1,
+            "nonce": "unique-nonce",
+            "secret": "your-secret",
+            "evaluation_url": "https://evaluation-server.com/callback",
+            "brief": "Create a calculator app",
+            "checks": ["Repo has MIT license", "README.md is professional"],
+            "attachments": []
+        }
+    }
+
+
 @app.post("/api/build", response_model=TaskResponse)
 async def build_and_deploy(
     request: TaskRequest,
