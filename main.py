@@ -344,7 +344,7 @@ async def process_task(request: TaskRequest, request_key: tuple):
         # Step 2: Create/update repository
         if request.round == 1:
             logger.info("Step 2: Creating new GitHub repository...")
-            deployment = github_service.create_and_deploy(
+            deployment = await github_service.create_and_deploy(
                 repo_name=repo_name,
                 files=files,
                 task_id=request.task

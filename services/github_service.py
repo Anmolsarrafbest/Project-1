@@ -19,7 +19,7 @@ class GitHubService:
         self.user = self.github.get_user()
         self.pages_timeout = pages_timeout
     
-    def create_and_deploy(
+    async def create_and_deploy(
         self,
         repo_name: str,
         files: Dict[str, str],
@@ -56,7 +56,7 @@ class GitHubService:
             pages_url = self._enable_pages(repo)
             
             # Wait for Pages to be ready (async)
-            asyncio.run(self._wait_for_pages(pages_url))
+            await self._wait_for_pages(pages_url)
             
             return {
                 "repo_url": repo.html_url,
