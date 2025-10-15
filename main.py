@@ -362,7 +362,6 @@ async def process_task(request: TaskRequest, request_key: tuple):
         logger.info("=" * 60)
         
         try:
-            import time
             # Add cache-busting timestamp to prevent validating stale content
             cache_buster = f"?_t={int(time.time())}"
             
